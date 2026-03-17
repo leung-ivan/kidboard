@@ -1,12 +1,15 @@
-// ParentGate — guards settings access.
+// ParentGate — exit gate overlay rendered on top of the dimmed playground.
 //
-// Generates a random multiplication problem (2-9 × 2-9).
-// Three wrong answers triggers a 30-second cooldown.
-// Correct answer → calls onSuccess().
-// Cancel button → calls onCancel().
+// Appears when a parent holds Escape for 5 s (desktop) or holds the lock icon
+// for 2 s (mobile).  Guards the transition from fullscreen playground → Settings.
+//
+// Math problem: random multiplication (2–9 × 2–9).
+// Three wrong answers → 30-second cooldown.
+// Correct answer → onSuccess()  (App.tsx exits fullscreen + navigates to Settings)
+// Cancel button  → onCancel()   (dismisses overlay, playground resumes)
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { motion, useAnimation, AnimatePresence } from 'framer-motion'
+import { motion, AnimatePresence, useMotionValue, animate } from 'framer-motion'
 
 interface ParentGateProps {
   onSuccess: () => void
@@ -44,9 +47,11 @@ export default function ParentGate({ onSuccess, onCancel }: ParentGateProps) {
   const [remaining,   setRemaining]   = useState(0)           // seconds left in cooldown
   const [phase,       setPhase]       = useState<'idle' | 'wrong' | 'success'>('idle')
 
-  const inputRef     = useRef<HTMLInputElement>(null)
-  const formControls = useAnimation()   // drives shake on wrong answer
-  const cardControls = useAnimation()   // drives success flash
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // MotionValues replace useAnimation (unreliable in Framer Motion v11)
+  const shakeX   = useMotionValue(0)   // drives horizontal shake on wrong answer
+  const cardScale = useMotionValue(1)  // drives success micro-scale on correct answer
 
   const isLocked = cooldownEnd !== null
 
@@ -74,23 +79,20 @@ export default function ParentGate({ onSuccess, onCancel }: ParentGateProps) {
     if (isNaN(guess) || isLocked) return
 
     if (guess === problem.answer) {
-      // Correct ✓
+      // Correct ✓ — subtle scale bounce then call onSuccess
       setPhase('success')
-      await cardControls.start({
-        scale:       [1, 1.02, 1],
-        transition:  { duration: 0.35 },
-      })
-      setTimeout(onSuccess, 120)
+      await animate(cardScale, [1, 1.03, 1], { duration: 0.35 })
+      setTimeout(onSuccess, 100)
     } else {
-      // Wrong ✗
+      // Wrong ✗ — shake the problem row, increment attempt counter
       setPhase('wrong')
       const nextAttempts = attempts + 1
       setAttempts(nextAttempts)
       setInput('')
 
-      await formControls.start({
-        x:          [0, -14, 12, -10, 7, -4, 2, 0],
-        transition: { duration: 0.45, times: [0, 0.1, 0.25, 0.4, 0.55, 0.7, 0.85, 1] },
+      await animate(shakeX, [0, -14, 12, -10, 7, -4, 2, 0], {
+        duration: 0.45,
+        times: [0, 0.1, 0.25, 0.4, 0.55, 0.7, 0.85, 1],
       })
 
       if (nextAttempts >= MAX_ATTEMPTS) {
@@ -98,14 +100,16 @@ export default function ParentGate({ onSuccess, onCancel }: ParentGateProps) {
         setAttempts(0)
         setProblem(newProblem())
       } else {
-        setProblem(newProblem()) // fresh problem each wrong attempt
+        setProblem(newProblem())  // fresh problem each wrong attempt
       }
       setPhase('idle')
     }
-  }, [input, problem, attempts, isLocked, formControls, cardControls, onSuccess])
+  }, [input, problem, attempts, isLocked, shakeX, cardScale, onSuccess])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') handleSubmit()
+    // Stop propagation so keystrokes don't reach the Playground's KeyHandler
+    e.stopPropagation()
   }
 
   // ── Render ───────────────────────────────────────────────────────────────
@@ -118,9 +122,8 @@ export default function ParentGate({ onSuccess, onCancel }: ParentGateProps) {
       transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
     >
       <motion.div
-        animate={cardControls}
+        style={{ scale: cardScale, border: '2px solid #e2e8f0' }}
         className="bg-white rounded-3xl shadow-2xl overflow-hidden"
-        style={{ border: '2px solid #e2e8f0' }}
       >
         {/* ── Header ─────────────────────────────────────────────────────── */}
         <div className="px-8 pt-8 pb-5 text-center">
@@ -134,7 +137,7 @@ export default function ParentGate({ onSuccess, onCancel }: ParentGateProps) {
           <p className="text-sm text-slate-500 mt-1">
             {isLocked
               ? 'Too many wrong answers — please wait'
-              : 'Solve to access settings'}
+              : 'Solve to exit and open settings'}
           </p>
         </div>
 
@@ -173,9 +176,9 @@ export default function ParentGate({ onSuccess, onCancel }: ParentGateProps) {
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
               >
-                {/* Problem display */}
+                {/* Problem display — shakes on wrong answer */}
                 <motion.div
-                  animate={formControls}
+                  style={{ x: shakeX }}
                   className="flex items-center justify-center gap-4 mb-7"
                 >
                   <NumberBadge value={problem.a} />

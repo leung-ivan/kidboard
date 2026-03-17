@@ -236,7 +236,7 @@ function ControlsTab() {
           <div>
             <p className="text-sm font-semibold text-slate-800">{shortcutLabel}</p>
             <p className="text-xs text-slate-400 mt-0.5">
-              Hold this key to open Settings from the playground
+              Hold to exit fullscreen playground and open Settings
             </p>
           </div>
           <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-slate-100

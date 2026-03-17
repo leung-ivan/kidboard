@@ -119,12 +119,18 @@ export default function Playground() {
   const themeId   = useAppStore(selectThemeId)
   const ageMode   = useAppStore(selectAgeMode)
   const soundMode = useAppStore(selectSoundMode)
-  const setMode   = useAppStore(s => s.setMode)
   const settings  = useAppStore(s => s.settings)
+
+  const setShowExitGate = useAppStore(s => s.setShowExitGate)
+  const showExitGate    = useAppStore(s => s.showExitGate)
 
   const theme     = THEMES_BY_ID[themeId] ?? THEMES_BY_ID['stars']
   const itemSize  = ITEM_SIZE[ageMode] ?? ITEM_SIZE.toddler
   const itemCount = ITEM_COUNT[ageMode] ?? ITEM_COUNT.toddler
+
+  // Ref so event-handler closures can check gate state without stale captures
+  const showExitGateRef = useRef(false)
+  useEffect(() => { showExitGateRef.current = showExitGate }, [showExitGate])
 
   // ── Fullscreen ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -201,8 +207,12 @@ export default function Playground() {
     return () => Object.values(timers).forEach(clearTimeout)
   }, [])
 
-  // Shared action handler for both KeyHandler and TouchHandler
+  // Shared action handler for both KeyHandler and TouchHandler.
+  // Guarded: while the exit gate is open, ignore all actions so the parent's
+  // keyboard input (typing the math answer) doesn't trigger playground items.
   const onAction = useCallback((action: KeyAction) => {
+    if (showExitGateRef.current) return
+
     switch (action.type) {
       case 'trigger': {
         const [color, nextIdx] = pickNextColor(theme.palette, lastColorIdx.current)
@@ -232,11 +242,12 @@ export default function Playground() {
         break
       }
       case 'exit': {
-        setMode('parent-gate')
+        // Show the exit gate overlay — stays on top of the (dimmed) playground
+        setShowExitGate(true)
         break
       }
     }
-  }, [theme.palette, setGlow, fadeGlow, setMode, triggerSfx, startHoldSfx, stopHoldSfx])
+  }, [theme.palette, setGlow, fadeGlow, setShowExitGate, triggerSfx, startHoldSfx, stopHoldSfx])
 
   // ── KeyHandler ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -335,9 +346,9 @@ export default function Playground() {
     setLockHeld(true)
     lockTimerRef.current = setTimeout(() => {
       setLockHeld(false)
-      setMode('parent-gate')
+      setShowExitGate(true)
     }, 2000)
-  }, [setMode])
+  }, [setShowExitGate])
 
   const onLockEnd = useCallback(() => {
     setLockHeld(false)

@@ -14,7 +14,7 @@ export interface Settings {
   ageMode: 'baby' | 'toddler' | 'preschool'
   soundMode: 'item_sounds' | 'phonics' | 'pronunciation' | 'vocabulary'
   selectedThemeId: string
-  exitShortcut: string        // e.g. "Escape:3000" or "ctrl+alt+d"
+  exitShortcut: string        // e.g. "Escape:5000" or "ctrl+alt+d"
   parentGateType: 'math' | 'pin'
   parentGatePin?: string      // hashed 4-digit PIN; only present when type === 'pin'
   favoriteSongIds: string[]
@@ -24,7 +24,7 @@ const DEFAULT_SETTINGS: Settings = {
   ageMode: 'toddler',
   soundMode: 'item_sounds',
   selectedThemeId: 'stars',
-  exitShortcut: 'Escape:3000',
+  exitShortcut: 'Escape:5000',
   parentGateType: 'math',
   favoriteSongIds: [],
 }
@@ -35,7 +35,10 @@ const DEFAULT_SETTINGS: Settings = {
 
 export interface AppState {
   // App mode — drives top-level view rendering
-  mode: 'landing' | 'playground' | 'parent-gate' | 'settings'
+  mode: 'landing' | 'playground' | 'settings'
+
+  // Whether the exit gate overlay is currently visible on top of the playground
+  showExitGate: boolean
 
   // Which child profile is active (null = no profiles / guest default)
   // Populated in P1 when child profiles are implemented
@@ -55,6 +58,9 @@ export interface AppState {
 
   /** Switch to a new app mode. */
   setMode(mode: AppState['mode']): void
+
+  /** Show or hide the exit gate overlay (renders on top of the playground). */
+  setShowExitGate(show: boolean): void
 
   /** Partial-update settings and persist to localStorage. */
   updateSettings(partial: Partial<Settings>): void
@@ -84,6 +90,7 @@ export const useAppStore = create<AppState>()(
     (set) => ({
       // Initial state
       mode: 'landing',
+      showExitGate: false,
       activeChildProfileId: null,
       settings: DEFAULT_SETTINGS,
       currentSongId: '',
@@ -93,6 +100,10 @@ export const useAppStore = create<AppState>()(
       // Actions
       setMode(mode) {
         set({ mode })
+      },
+
+      setShowExitGate(show) {
+        set({ showExitGate: show })
       },
 
       updateSettings(partial) {
