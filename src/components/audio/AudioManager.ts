@@ -9,10 +9,12 @@
 //   • unlockAudio(): resumes AudioContext on first user gesture (iOS requirement)
 //
 // File loading strategy:
-//   All src arrays include a .wav fallback so placeholder WAV files work
-//   while real .mp3 files are pending:
-//     preloadSfx('/audio/sfx/star-chime.mp3')
-//     → Howler tries ['.mp3', '.wav'] in order
+//   Howler.js picks the FIRST format in the src array whose codec the browser
+//   supports (not based on which file actually loads).  For SFX, if you only
+//   have a .wav, pass that directly.  Multi-entry src arrays are for codec
+//   fallback only (e.g., browsers that can't decode .mp3 will use .wav).
+//   NOTE: Howler does NOT fall back to the next src entry on a 404 — always
+//   ensure the primary src exists at the given path.
 
 import { Howl, Howler } from 'howler'
 import type { SongMetadata } from './SongData'
@@ -281,9 +283,20 @@ export class AudioManager {
    */
   unlockAudio() {
     this.toneSynth.resume()
-    // Howler auto-unlocks on first play, but this covers edge cases
-    if (this.songHowl && Howler.ctx?.state === 'suspended') {
-      Howler.ctx.resume()
+    // Explicitly resume the Howler AudioContext in case Howler's own autoUnlock
+    // didn't fire yet (e.g., keyboard-only users on some browsers).
+    Howler.ctx?.resume()
+    // If a song was supposed to be playing but got blocked by the browser's
+    // autoplay policy, retry it.  We defer 80 ms to let Howler's own _unlock
+    // handler run first — if it successfully starts the song, _isPlaying
+    // becomes true and we skip the duplicate play() call.
+    if (this.songHowl && this.playlist.length > 0 && !this._isPlaying) {
+      setTimeout(() => {
+        if (!this._isPlaying && this.songHowl) {
+          console.log('[AudioManager] Retrying autoplay-blocked song after user gesture')
+          this.songHowl.play()
+        }
+      }, 80)
     }
   }
 
@@ -313,6 +326,8 @@ export class AudioManager {
     this._stopSong()
     this.playlistIdx = index
 
+    console.log('[AudioManager] SONG PLAY CALLED', song.id, song.filePath)
+
     this.songHowl = new Howl({
       src:    this._songSrc(song.filePath),
       volume: this._musicVolume,
@@ -320,19 +335,27 @@ export class AudioManager {
       onplay: () => {
         this._isPlaying = true
         this.onBpmChange?.(song.bpm)
+        console.log('[AudioManager] Song playing:', song.id, 'BPM:', song.bpm)
       },
       onend: () => {
         // Auto-advance to next song
         const nextIdx = (index + 1) % this.playlist.length
         this._playSong(nextIdx)
       },
-      onloaderror: () => {
-        // Skip to next song silently — placeholder files may not exist yet
+      onloaderror: (_id: number, err: unknown) => {
+        console.error('[AudioManager] Song load error:', song.filePath, err)
+        // Skip to next song — avoid infinite loop if all songs are missing
         const nextIdx = (index + 1) % this.playlist.length
         if (nextIdx !== index) {
-          // Avoid infinite loop if all songs are missing
           this._playSong(nextIdx)
         }
+      },
+      onplayerror: (_id: number, err: unknown) => {
+        // Most common cause: browser autoplay policy blocked the play attempt.
+        // Howler's own keydown/mousedown autoUnlock will resume the AudioContext
+        // and replay the sound automatically.  We also retry explicitly via
+        // unlockAudio() so keyboard-only users are covered in all browsers.
+        console.warn('[AudioManager] Song play error (likely autoplay block):', song.id, err)
       },
     })
     this.songHowl.play()
