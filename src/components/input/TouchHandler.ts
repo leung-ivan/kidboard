@@ -67,17 +67,17 @@ export class TouchHandler {
   // ── Public API ────────────────────────────────────────────────────────────
 
   attach(target: EventTarget = document) {
-    target.addEventListener('pointerdown',   this.boundDown,   { capture: true })
-    target.addEventListener('pointermove',   this.boundMove,   { capture: true, passive: true } as AddEventListenerOptions)
-    target.addEventListener('pointerup',     this.boundUp,     { capture: true })
-    target.addEventListener('pointercancel', this.boundCancel, { capture: true })
+    target.addEventListener('pointerdown',   this.boundDown   as EventListener, { capture: true })
+    target.addEventListener('pointermove',   this.boundMove   as EventListener, { capture: true, passive: true })
+    target.addEventListener('pointerup',     this.boundUp     as EventListener, { capture: true })
+    target.addEventListener('pointercancel', this.boundCancel as EventListener, { capture: true })
   }
 
   detach(target: EventTarget = document) {
-    target.removeEventListener('pointerdown',   this.boundDown,   { capture: true })
-    target.removeEventListener('pointermove',   this.boundMove,   { capture: true })
-    target.removeEventListener('pointerup',     this.boundUp,     { capture: true })
-    target.removeEventListener('pointercancel', this.boundCancel, { capture: true })
+    target.removeEventListener('pointerdown',   this.boundDown   as EventListener, { capture: true })
+    target.removeEventListener('pointermove',   this.boundMove   as EventListener, { capture: true })
+    target.removeEventListener('pointerup',     this.boundUp     as EventListener, { capture: true })
+    target.removeEventListener('pointercancel', this.boundCancel as EventListener, { capture: true })
   }
 
   /** Update options when items/layout changes (avoids recreating the instance). */
