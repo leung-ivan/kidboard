@@ -9,7 +9,7 @@
 //   6. Label             — item name below circle in preschool mode
 
 import React, { memo, useEffect, useRef, useState } from 'react'
-import { motion, useAnimation, useMotionValue, animate } from 'framer-motion'
+import { motion, useMotionValue, animate } from 'framer-motion'
 import { DRAG_SPRING } from '@/utils/animation'
 
 // ---------------------------------------------------------------------------
@@ -125,47 +125,45 @@ const PlaygroundItem = memo(({
   // ── Float ──────────────────────────────────────────────────────────────
   const floatY = useFloatY(phaseOffset, floatPeriod, floatAmplitude)
 
-  // ── Scale controls ─────────────────────────────────────────────────────
-  const scaleControls = useAnimation()
+  // ── Scale (MotionValue — no useAnimation, works reliably in FM v11) ────
+  const scaleMV = useMotionValue(1)
 
-  // Ref so beatTick effect reads current isHeld without adding it as a dep
+  // Ref so beat-pulse effect can read isHeld without adding it as a dep
+  // (avoids recreating the beat effect on every hold-state change)
   const isHeldRef = useRef(isHeld)
   useEffect(() => { isHeldRef.current = isHeld }, [isHeld])
 
-  // Max-size pulse state
-  const isAtMaxRef = useRef(false)
-  const maxTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // isAtMax drives the max-size glow pulse; needs useState so it triggers a render
+  const [isAtMax, setIsAtMax] = useState(false)
 
   // Hold grow / release spring-back
   useEffect(() => {
     if (isHeld) {
-      isAtMaxRef.current = false
-      // Grow from current scale → 2.5× over 2 s
-      scaleControls.start({
-        scale: 2.5,
-        transition: { duration: 2, ease: [0.25, 0.1, 0.7, 1.0] },
+      setIsAtMax(false)
+      // Grow from wherever scale currently is → 2.5× over 2 s
+      const anim = animate(scaleMV, 2.5, {
+        duration: 2,
+        ease: [0.25, 0.1, 0.7, 1.0],
+        onComplete: () => setIsAtMax(true),
       })
-      // Flag max reached after 2 s so the glow layer can start pulsing
-      if (maxTimerRef.current) clearTimeout(maxTimerRef.current)
-      maxTimerRef.current = setTimeout(() => {
-        isAtMaxRef.current = true
-      }, 2000)
+      return () => anim.stop()
     } else {
-      if (maxTimerRef.current) { clearTimeout(maxTimerRef.current); maxTimerRef.current = null }
-      isAtMaxRef.current = false
-      scaleControls.start({ scale: 1, transition: RELEASE_SPRING })
+      setIsAtMax(false)
+      // Ease-out-elastic spring-back to 1× (~400 ms, overshoot feel)
+      const anim = animate(scaleMV, 1, RELEASE_SPRING)
+      return () => anim.stop()
     }
-    return () => { if (maxTimerRef.current) clearTimeout(maxTimerRef.current) }
-  }, [isHeld, scaleControls])
+  }, [isHeld, scaleMV])
 
   // Beat-pulse — skip while held or actively dragging
   useEffect(() => {
     if (beatTick === 0 || isHeldRef.current || isDraggingRef.current) return
-    scaleControls.start({
-      scale: [1, beatPulseScale, 1],
-      transition: { duration: 0.28, times: [0, 0.45, 1], ease: 'easeOut' },
+    animate(scaleMV, [1, beatPulseScale, 1], {
+      duration: 0.28,
+      times: [0, 0.45, 1],
+      ease: 'easeOut',
     })
-  }, [beatTick, scaleControls, beatPulseScale])
+  }, [beatTick, scaleMV, beatPulseScale])
 
   // ── Glow derived values ─────────────────────────────────────────────────
   const isGlowing = glowColor !== null
@@ -188,7 +186,7 @@ const PlaygroundItem = memo(({
 
   // At max size: pulse the outer glow rings
   const maxPulse =
-    isHeld && isAtMaxRef.current && isGlowing
+    isHeld && isAtMax && isGlowing
       ? {
           boxShadow: [
             `0 0 0 3px ${glowColor}99, 0 0 30px 12px ${glowColor}88, 0 0 60px 30px ${glowColor}44`,
@@ -234,7 +232,7 @@ const PlaygroundItem = memo(({
         <motion.div style={{ y: floatY }}>
 
           {/* Layer 4: Scale — hold-grow, beat-pulse, spring-back */}
-          <motion.div animate={scaleControls} initial={{ scale: 1 }}>
+          <motion.div style={{ scale: scaleMV }}>
 
             {/* Layer 5: Glow circle */}
             <motion.div
