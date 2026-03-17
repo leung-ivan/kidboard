@@ -12,6 +12,7 @@
 //   • Mobile: semi-transparent lock icon top-right for long-press exit
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useKeyHold } from '@/hooks/useKeyHold'
 import { motion } from 'framer-motion'
 import BackgroundScene from './BackgroundScene'
 import PlaygroundItem from './PlaygroundItem'
@@ -207,6 +208,72 @@ export default function Playground() {
     return () => Object.values(timers).forEach(clearTimeout)
   }, [])
 
+  // ── Hold-grow state (keyboard only — RAF-driven via useKeyHold) ─────────
+  const [activeItemId, setActiveItemId] = useState<string | null>(null)
+  const [holdScale,    setHoldScale]    = useState(1)
+
+  // Refs so useKeyHold callbacks always read the latest values without
+  // going stale inside the memoised callbacks or the RAF loop
+  const activeItemIdRef      = useRef<string | null>(null)
+  const lastKeyItemIdRef     = useRef<string | null>(null)
+  const startHoldSfxFiredRef = useRef(false)
+  useEffect(() => { activeItemIdRef.current = activeItemId }, [activeItemId])
+
+  // Stable item-ID list and matchKey map for onTrigger item selection
+  const layoutItemIds    = useMemo(() => layout.map(l => l.id), [layout])
+  const matchKeysForHook = useMemo<Record<string, string>>(() => {
+    const mk: Record<string, string> = {}
+    theme.items.forEach(item => {
+      if (item.matchKey) mk[item.matchKey.toUpperCase()] = item.id
+    })
+    return mk
+  }, [theme.items])
+
+  useKeyHold(
+    // onTrigger — fires on first keydown (no repeat).
+    // Selects item using same logic as KeyHandler, sets glow and audio.
+    useCallback((key: string) => {
+      if (showExitGateRef.current) return
+      const keyUpper = key.toUpperCase()
+      const ids = layoutItemIds
+      let itemId: string | undefined
+      if (matchKeysForHook[keyUpper] && matchKeysForHook[keyUpper] !== lastKeyItemIdRef.current) {
+        itemId = matchKeysForHook[keyUpper]
+      } else {
+        const candidates = ids.filter(id => id !== lastKeyItemIdRef.current)
+        itemId = candidates[Math.floor(Math.random() * candidates.length)] ?? ids[0]
+      }
+      if (!itemId) return
+      lastKeyItemIdRef.current = itemId
+      const [color, nextIdx] = pickNextColor(theme.palette, lastColorIdx.current)
+      lastColorIdx.current = nextIdx
+      setGlow(itemId, color, false)   // no autoFade — persists until onRelease
+      triggerSfx(itemId)
+      setActiveItemId(itemId)
+      startHoldSfxFiredRef.current = false
+    }, [layoutItemIds, matchKeysForHook, theme.palette, setGlow, triggerSfx]),
+
+    // onScaleChange — fires each RAF frame while key is held (~60 fps).
+    // Updates holdScale; fires startHoldSfx once on the first frame.
+    useCallback((_key: string, scale: number) => {
+      setHoldScale(scale)
+      if (!startHoldSfxFiredRef.current && activeItemIdRef.current) {
+        startHoldSfxFiredRef.current = true
+        startHoldSfx(activeItemIdRef.current)
+      }
+    }, [startHoldSfx]),
+
+    // onRelease — fires on keyup.  Fades glow, stops audio, resets scale.
+    useCallback((_key: string) => {
+      if (activeItemIdRef.current) {
+        fadeGlow(activeItemIdRef.current)
+        stopHoldSfx(activeItemIdRef.current)
+      }
+      setActiveItemId(null)
+      setHoldScale(1)
+    }, [fadeGlow, stopHoldSfx]),
+  )
+
   // Shared action handler for both KeyHandler and TouchHandler.
   // Guarded: while the exit gate is open, ignore all actions so the parent's
   // keyboard input (typing the math answer) doesn't trigger playground items.
@@ -262,6 +329,7 @@ export default function Playground() {
       matchKeys,
       exitShortcut: settings.exitShortcut,
       onAction,
+      disableAlphaDigit: true,  // alpha/digit keys handled entirely by useKeyHold
     })
 
     const onKD = (e: KeyboardEvent) => handler.handleKeyDown(e)
@@ -376,7 +444,8 @@ export default function Playground() {
           homeY={l.homeY}
           size={itemSize}
           glowColor={itemColors[l.id] ?? null}
-          isHeld={heldItemIds.has(l.id)}
+          isHeld={heldItemIds.has(l.id) || activeItemId === l.id}
+          holdScale={activeItemId === l.id ? holdScale : 1}
           beatTick={beatTick}
           showLabel={showLabels}
           phaseOffset={l.phaseOffset}

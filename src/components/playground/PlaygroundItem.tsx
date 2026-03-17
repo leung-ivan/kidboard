@@ -4,7 +4,8 @@
 //   1. Position wrapper  — absolute placement at homeX/homeY, centres the item
 //   2. Drag layer        — free drag (toddler/preschool), springs back to 0 on release
 //   3. Float layer       — slow sine-wave y-drift via RAF + MotionValue (no re-render)
-//   4. Scale layer       — hold-grow (1×→2.5× over 2s), beat-pulse, spring-back
+//   4a. Beat-pulse layer — MotionValue beatScaleMV driven by short animate() bursts
+//   4b. Hold-grow layer  — animate prop { scale: holdScale }, RAF-driven via useKeyHold
 //   5. Glow layer        — background fill + box-shadow, animates on glow color change
 //   6. Label             — item name below circle in preschool mode
 
@@ -36,6 +37,10 @@ export interface PlaygroundItemProps {
   vpH: number               // viewport height for drag constraints
   // Beat pulse intensity: baby = 1.06 (gentler), toddler/preschool = 1.08
   beatPulseScale?: number
+  // Hold-grow scale: 1.0 (idle) → 2.5 (max held), driven by RAF loop in Playground
+  // Passed as a numeric prop so Framer Motion's animate={{ scale }} can apply it
+  // immediately (duration:0) without relying on animate(MotionValue, ...) internals
+  holdScale?: number
   // Optional SVG content rendered centered inside the circle
   graphic?: React.ReactNode
 }
@@ -103,6 +108,7 @@ const PlaygroundItem = memo(({
   vpW,
   vpH,
   beatPulseScale = 1.08,
+  holdScale = 1,
   graphic,
 }: PlaygroundItemProps) => {
 
@@ -125,45 +131,39 @@ const PlaygroundItem = memo(({
   // ── Float ──────────────────────────────────────────────────────────────
   const floatY = useFloatY(phaseOffset, floatPeriod, floatAmplitude)
 
-  // ── Scale (MotionValue — no useAnimation, works reliably in FM v11) ────
-  const scaleMV = useMotionValue(1)
+  // ── Scale ──────────────────────────────────────────────────────────────
+  //
+  // Two-layer approach — keeps mechanisms separate and avoids animate(MotionValue)
+  // internals which are unreliable under React StrictMode's double-invoke:
+  //
+  //   Beat-pulse layer  (outer) : MotionValue `beatScaleMV` driven by animate()
+  //   Hold-grow  layer  (inner) : animate={{ scale: holdScale }} prop, driven by a
+  //                               RAF loop in Playground via useKeyHold. Using the
+  //                               animate *prop* (not standalone animate()) lets FM
+  //                               manage its own interpolation state reliably.
+  //
+  // Spring-back on release: when isHeld flips to false, holdScale returns to 1.
+  // FM sees the animate target drop to 1 and applies RELEASE_SPRING to get there.
 
-  // Ref so beat-pulse effect can read isHeld without adding it as a dep
-  // (avoids recreating the beat effect on every hold-state change)
+  // Beat-pulse MotionValue (still uses animate() but only for short 0.28s bursts)
+  const beatScaleMV = useMotionValue(1)
+
+  // Ref so beat-pulse guard can read isHeld without adding it as a dep
   const isHeldRef = useRef(isHeld)
   useEffect(() => { isHeldRef.current = isHeld }, [isHeld])
 
-  // isAtMax drives the max-size glow pulse; needs useState so it triggers a render
-  const [isAtMax, setIsAtMax] = useState(false)
+  // isAtMax derived directly from the holdScale prop — no state needed
+  const isAtMax = holdScale >= 2.49
 
-  // Hold grow / release spring-back
-  useEffect(() => {
-    if (isHeld) {
-      setIsAtMax(false)
-      // Grow from wherever scale currently is → 2.5× over 2 s
-      const anim = animate(scaleMV, 2.5, {
-        duration: 2,
-        ease: [0.25, 0.1, 0.7, 1.0],
-        onComplete: () => setIsAtMax(true),
-      })
-      return () => anim.stop()
-    } else {
-      setIsAtMax(false)
-      // Ease-out-elastic spring-back to 1× (~400 ms, overshoot feel)
-      const anim = animate(scaleMV, 1, RELEASE_SPRING)
-      return () => anim.stop()
-    }
-  }, [isHeld, scaleMV])
-
-  // Beat-pulse — skip while held or actively dragging
+  // Beat-pulse — skip while held or dragging (guard via ref to avoid stale closure)
   useEffect(() => {
     if (beatTick === 0 || isHeldRef.current || isDraggingRef.current) return
-    animate(scaleMV, [1, beatPulseScale, 1], {
+    animate(beatScaleMV, [1, beatPulseScale, 1], {
       duration: 0.28,
       times: [0, 0.45, 1],
       ease: 'easeOut',
     })
-  }, [beatTick, scaleMV, beatPulseScale])
+  }, [beatTick, beatScaleMV, beatPulseScale])
 
   // ── Glow derived values ─────────────────────────────────────────────────
   const isGlowing = glowColor !== null
@@ -231,46 +231,55 @@ const PlaygroundItem = memo(({
         {/* Layer 3: Float — y-axis sine-wave (MotionValue, zero re-renders) */}
         <motion.div style={{ y: floatY }}>
 
-          {/* Layer 4: Scale — hold-grow, beat-pulse, spring-back */}
-          <motion.div style={{ scale: scaleMV }}>
+          {/* Layer 4a: Beat-pulse — MotionValue driven by short animate() bursts */}
+          <motion.div style={{ scale: beatScaleMV }}>
 
-            {/* Layer 5: Glow circle */}
+            {/* Layer 4b: Hold-grow — animate prop; scale fed by RAF loop via useKeyHold */}
             <motion.div
-              className="rounded-full relative overflow-hidden"
-              style={{
-                width: size,
-                height: size,
-                border: `1.5px solid ${borderColor}`,
-                transition: `border-color 0.15s ease`,
-              }}
-              animate={maxPulse ?? { boxShadow, backgroundColor: bgFill }}
-              transition={
-                maxPulse
-                  ? { duration: 0.75, repeat: Infinity, ease: 'easeInOut' }
-                  : { duration: 0.15, ease: 'easeOut' }
-              }
+              animate={{ scale: holdScale }}
+              transition={isHeld && holdScale > 1 ? { duration: 0 } : RELEASE_SPRING}
+              style={{ transformOrigin: 'center center' }}
             >
-              {/* SVG graphic content — letter, digit, or icon */}
-              {graphic && (
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
-                  {graphic}
-                </div>
-              )}
 
-              {/* Inner highlight shimmer — top-left arc gives 3D bubble look */}
-              <div
-                className="absolute rounded-full pointer-events-none"
+              {/* Layer 5: Glow circle */}
+              <motion.div
+                className="rounded-full relative overflow-hidden"
                 style={{
-                  top: '8%',
-                  left: '10%',
-                  width: '38%',
-                  height: '26%',
-                  background:
-                    'radial-gradient(ellipse, rgba(255,255,255,0.38) 0%, transparent 100%)',
-                  transform: 'rotate(-25deg)',
-                  zIndex: 1,
+                  width: size,
+                  height: size,
+                  border: `1.5px solid ${borderColor}`,
+                  transition: `border-color 0.15s ease`,
                 }}
-              />
+                animate={maxPulse ?? { boxShadow, backgroundColor: bgFill }}
+                transition={
+                  maxPulse
+                    ? { duration: 0.75, repeat: Infinity, ease: 'easeInOut' }
+                    : { duration: 0.15, ease: 'easeOut' }
+                }
+              >
+                {/* SVG graphic content — letter, digit, or icon */}
+                {graphic && (
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
+                    {graphic}
+                  </div>
+                )}
+
+                {/* Inner highlight shimmer — top-left arc gives 3D bubble look */}
+                <div
+                  className="absolute rounded-full pointer-events-none"
+                  style={{
+                    top: '8%',
+                    left: '10%',
+                    width: '38%',
+                    height: '26%',
+                    background:
+                      'radial-gradient(ellipse, rgba(255,255,255,0.38) 0%, transparent 100%)',
+                    transform: 'rotate(-25deg)',
+                    zIndex: 1,
+                  }}
+                />
+              </motion.div>
+
             </motion.div>
 
           </motion.div>

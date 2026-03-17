@@ -16,6 +16,8 @@ export interface KeyHandlerOptions {
   matchKeys: Record<string, string>  // key → itemId
   exitShortcut: string               // e.g. "Escape:3000"
   onAction: (action: KeyAction) => void
+  // When true, alpha/digit keys are ignored here (handled externally by useKeyHold)
+  disableAlphaDigit?: boolean
 }
 
 export class KeyHandler {
@@ -46,6 +48,8 @@ export class KeyHandler {
 
     if (e.repeat) return
     if (!/^[a-zA-Z0-9]$/.test(e.key)) return
+    // Delegate alpha/digit keys to useKeyHold when flag is set
+    if (this.opts.disableAlphaDigit) return
 
     const key = e.key.toUpperCase()
 
